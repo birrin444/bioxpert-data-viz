@@ -8,6 +8,7 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  ReferenceLine,
 } from "recharts";
 
 function SvgIcon({ children, className = "h-5 w-5" }) {
@@ -135,6 +136,25 @@ function parseElapsedHours(value) {
   return hours + minutes / 60 + seconds / 3600;
 }
 
+function makeId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function parseAnnotationHour(value) {
+  const text = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(",", ".")
+    .replace(/\s*(h|hr|hrs|hour|hours)\.?$/, "");
+
+  if (!text) return null;
+  if (text.includes(":")) return parseElapsedHours(text);
+
+  const n = Number(text);
+  return Number.isFinite(n) ? n : null;
+}
+
 function formatDuration(hours) {
   if (!Number.isFinite(hours)) return "";
   const totalMinutes = Math.round(hours * 60);
@@ -248,7 +268,7 @@ function parseTrendCsv(text, fileName) {
     header: true,
     skipEmptyLines: true,
     dynamicTyping: false,
-    transformHeader: (header) => header.trim().replace("�", "°"),
+    transformHeader: (header) => header.trim().replace(" ", "°"),
   });
 
   if (parsed.errors?.length && !parsed.data?.length) {
@@ -337,6 +357,7 @@ export default function BioreactorTrendViewer() {
   const [graphTitle, setGraphTitle] = useState("Bioreactor Process Trends");
   const [graphTitleFontSize, setGraphTitleFontSize] = useState(24);
   const [showDots, setShowDots] = useState(false);
+  const [annotations, setAnnotations] = useState([]);
   const [draggedChannelKey, setDraggedChannelKey] = useState(null);
   const [error, setError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
@@ -355,6 +376,7 @@ export default function BioreactorTrendViewer() {
         setSelectedKeys(preferred.length ? preferred : fallback);
         setXEnd(result.maxHours);
         setSmoothWindow(1);
+        setAnnotations([]);
       } catch (err) {
         setError(err.message || "Unable to load this file.");
       }
@@ -372,6 +394,22 @@ export default function BioreactorTrendViewer() {
   const xStartNumber = 0;
   const xEndNumber = Math.max(0, Math.min(Number(xEnd), maxHours));
   const xTicks = useMemo(() => buildFiveHourTicks(xStartNumber, xEndNumber), [xStartNumber, xEndNumber]);
+
+  const visibleAnnotations = useMemo(() => {
+    return annotations
+      .map((annotation) => ({
+        ...annotation,
+        hour: parseAnnotationHour(annotation.time),
+        label: annotation.label.trim(),
+      }))
+      .filter(
+        (annotation) =>
+          Number.isFinite(annotation.hour) &&
+          annotation.label &&
+          annotation.hour >= xStartNumber &&
+          annotation.hour <= xEndNumber
+      );
+  }, [annotations, xStartNumber, xEndNumber]);
 
   const visibleRows = useMemo(() => {
     if (!trend) return [];
@@ -483,6 +521,30 @@ export default function BioreactorTrendViewer() {
       columns.splice(toIndex, 0, moved);
       return { ...current, columns };
     });
+  }
+
+  function addAnnotation() {
+    setAnnotations((current) => [
+      ...current,
+      {
+        id: makeId(),
+        time: "",
+        label: "",
+        color: "#dc2626",
+      },
+    ]);
+  }
+
+  function updateAnnotation(id, patch) {
+    setAnnotations((current) =>
+      current.map((annotation) =>
+        annotation.id === id ? { ...annotation, ...patch } : annotation
+      )
+    );
+  }
+
+  function removeAnnotation(id) {
+    setAnnotations((current) => current.filter((annotation) => annotation.id !== id));
   }
 
   function resetView() {
@@ -805,6 +867,101 @@ export default function BioreactorTrendViewer() {
                 </div>
               </section>
 
+              <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold">Annotations</h2>
+                    <p className="text-sm text-slate-600">Add vertical event markers by elapsed time.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addAnnotation}
+                    className="rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    Add
+                  </button>
+                </div>
+
+                {annotations.length === 0 ? (
+                  <p className="rounded-2xl bg-slate-100 px-3 py-2 text-sm text-slate-600">
+                    No annotations yet. Add one with a label, elapsed time, and color.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {annotations.map((annotation) => {
+                      const parsedHour = parseAnnotationHour(annotation.time);
+                      const hasInvalidTime = annotation.time.trim() && !Number.isFinite(parsedHour);
+                      const isOutsideWindow =
+                        Number.isFinite(parsedHour) &&
+                        (parsedHour < xStartNumber || parsedHour > xEndNumber);
+
+                      return (
+                        <div key={annotation.id} className="rounded-2xl border border-slate-200 p-3">
+                          <div className="grid gap-2">
+                            <label>
+                              <FieldLabel hint="Text displayed on the graph. Example: Feed started.">Label</FieldLabel>
+                              <input
+                                value={annotation.label}
+                                onChange={(event) =>
+                                  updateAnnotation(annotation.id, { label: event.target.value })
+                                }
+                                placeholder="Feed started"
+                                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                              />
+                            </label>
+
+                            <div className="grid grid-cols-[1fr_0.35fr_auto] gap-2">
+                              <label>
+                                <FieldLabel hint="Elapsed time in hours. Examples: 35, 35 hr, 35:30.">Time</FieldLabel>
+                                <input
+                                  value={annotation.time}
+                                  onChange={(event) =>
+                                    updateAnnotation(annotation.id, { time: event.target.value })
+                                  }
+                                  placeholder="35"
+                                  className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-sm"
+                                />
+                              </label>
+
+                              <label>
+                                <FieldLabel hint="Line and label color.">Color</FieldLabel>
+                                <input
+                                  type="color"
+                                  value={annotation.color}
+                                  onChange={(event) =>
+                                    updateAnnotation(annotation.id, { color: event.target.value })
+                                  }
+                                  className="h-10 w-full rounded-xl border border-slate-200 bg-white px-2"
+                                />
+                              </label>
+
+                              <button
+                                type="button"
+                                onClick={() => removeAnnotation(annotation.id)}
+                                className="self-end rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50"
+                              >
+                                Remove
+                              </button>
+                            </div>
+
+                            {hasInvalidTime && (
+                              <p className="text-xs font-medium text-red-600">
+                                Enter a valid elapsed time, such as 35, 35 hr, or 35:30.
+                              </p>
+                            )}
+                            {isOutsideWindow && (
+                              <p className="text-xs font-medium text-amber-700">
+                                This annotation is outside the currently displayed time window.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+
               <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 lg:col-span-2 2xl:col-span-4">
                 <div className="mb-4 flex items-end justify-between gap-2">
                   <div>
@@ -986,6 +1143,26 @@ export default function BioreactorTrendViewer() {
                           content={<CustomTooltip columnsByKey={columnsByKey} />}
                           labelFormatter={(value) => niceNumber(value, 2)}
                         />
+                        {selectedColumns[0] &&
+                          visibleAnnotations.map((annotation, index) => (
+                            <ReferenceLine
+                              key={annotation.id}
+                              x={annotation.hour}
+                              yAxisId={selectedColumns[0].key}
+                              stroke={annotation.color}
+                              strokeWidth={2}
+                              strokeDasharray="6 4"
+                              ifOverflow="discard"
+                              label={{
+                                value: annotation.label,
+                                position: "insideTop",
+                                fill: annotation.color,
+                                fontSize: Math.max(11, axisNumberFontSize),
+                                fontWeight: 700,
+                                dy: index * 16,
+                              }}
+                            />
+                          ))}
                         {selectedColumns.map((column) => (
                           <Line
                             key={column.key}
