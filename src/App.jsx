@@ -1,3 +1,4 @@
+// @ts-nocheck
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import Papa from "papaparse";
 import {
@@ -112,7 +113,10 @@ function Hint({ text }) {
 
 function FieldLabel({ children, hint }) {
   return (
-    <span className="mb-1 flex items-center text-sm font-medium text-slate-700" title={hint}>
+    <span
+      className="mb-1 flex items-center text-sm font-medium text-slate-700"
+      title={hint}
+    >
       {children}
       {hint && <Hint text={hint} />}
     </span>
@@ -166,6 +170,63 @@ function cleanChannelName(label) {
   return text;
 }
 
+const CHANNEL_DEFAULTS = [
+  { ids: ["m_ph", "mph", "ph"], displayName: "pH", yMin: "0", yMax: "14" },
+  {
+    ids: ["m_stirrer", "mstirrer", "stirrer"],
+    displayName: "Agitation",
+    yMin: "0",
+    yMax: "1500",
+  },
+  {
+    ids: ["m_air", "mair", "air"],
+    displayName: "Air",
+    yMin: "0",
+    yMax: "3000",
+  },
+  { ids: ["m_o2", "mo2", "o2"], displayName: "O2", yMin: "0", yMax: "3000" },
+  {
+    ids: ["dm_base", "dmbase", "base"],
+    displayName: "Base",
+    yMin: "0",
+    yMax: "1000",
+  },
+  {
+    ids: ["m_temp", "mtemp", "temp", "temperature"],
+    displayName: "Temperature",
+    yMin: "15",
+    yMax: "40",
+  },
+  {
+    ids: ["m_do", "mdo", "do", "dissolvedoxygen"],
+    displayName: "DO%",
+    yMin: "0",
+    yMax: "110",
+  },
+];
+
+function normalizeChannelId(label) {
+  return cleanChannelName(label)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/ /g, "")
+    .replace(/[°º]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function getDefaultChannelSettings(label) {
+  const normalized = normalizeChannelId(label);
+  const compact = normalized.replace(/_/g, "");
+  return (
+    CHANNEL_DEFAULTS.find(
+      (defaults) =>
+        defaults.ids.includes(normalized) || defaults.ids.includes(compact)
+    ) || null
+  );
+}
+
 function baseFileName(fileName) {
   const dot = fileName.lastIndexOf(".");
   return dot > 0 ? fileName.slice(0, dot) : fileName;
@@ -173,8 +234,10 @@ function baseFileName(fileName) {
 
 function niceNumber(value, digits = 3) {
   if (value == null || !Number.isFinite(value)) return "—";
-  if (Math.abs(value) >= 1000) return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  if (Math.abs(value) >= 100) return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  if (Math.abs(value) >= 1000)
+    return value.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (Math.abs(value) >= 100)
+    return value.toLocaleString(undefined, { maximumFractionDigits: 1 });
   return value.toLocaleString(undefined, { maximumFractionDigits: digits });
 }
 
@@ -204,7 +267,11 @@ function movingAverage(values, windowSize, key) {
   return values.map((row, i) => {
     let sum = 0;
     let count = 0;
-    for (let j = Math.max(0, i - half); j <= Math.min(values.length - 1, i + half); j += 1) {
+    for (
+      let j = Math.max(0, i - half);
+      j <= Math.min(values.length - 1, i + half);
+      j += 1
+    ) {
       const v = values[j][key];
       if (Number.isFinite(v)) {
         sum += v;
@@ -220,7 +287,8 @@ function downsampleRows(rows, maxPoints) {
   const step = Math.ceil(rows.length / maxPoints);
   const sampled = [];
   for (let i = 0; i < rows.length; i += step) sampled.push(rows[i]);
-  if (sampled[sampled.length - 1] !== rows[rows.length - 1]) sampled.push(rows[rows.length - 1]);
+  if (sampled[sampled.length - 1] !== rows[rows.length - 1])
+    sampled.push(rows[rows.length - 1]);
   return sampled;
 }
 
@@ -240,7 +308,9 @@ function getStats(rows, key) {
 
 function isPreferredChannel(column) {
   const text = `${column.displayName} ${column.originalName}`.toLowerCase();
-  return ["ph", "temp", "do", "oxygen", "o2"].some((term) => text.includes(term));
+  return ["ph", "temp", "do", "oxygen", "o2"].some((term) =>
+    text.includes(term)
+  );
 }
 
 function parseTrendCsv(text, fileName) {
@@ -248,7 +318,11 @@ function parseTrendCsv(text, fileName) {
     header: true,
     skipEmptyLines: true,
     dynamicTyping: false,
-    transformHeader: (header) => header.trim().replace("�", "°"),
+    transformHeader: (header) =>
+      header
+        .trim()
+        .replace(/^\uFEFF/, "")
+        .replace(/ /g, "°"),
   });
 
   if (parsed.errors?.length && !parsed.data?.length) {
@@ -263,16 +337,21 @@ function parseTrendCsv(text, fileName) {
 
   const numericHeaders = headers.filter((h) => h !== timeHeader);
   const columns = numericHeaders
-    .map((originalName, index) => ({
-      originalName,
-      displayName: cleanChannelName(originalName),
-      key: `v${index}`,
-      unit: extractUnit(originalName),
-      color: COLORS[index % COLORS.length],
-      yMin: "",
-      yMax: "",
-    }))
-    .filter((column) => parsed.data.some((row) => coerceNumber(row[column.originalName]) != null));
+    .map((originalName, index) => {
+      const defaults = getDefaultChannelSettings(originalName);
+      return {
+        originalName,
+        displayName: defaults?.displayName || cleanChannelName(originalName),
+        key: `v${index}`,
+        unit: extractUnit(originalName),
+        color: COLORS[index % COLORS.length],
+        yMin: defaults?.yMin || "",
+        yMax: defaults?.yMax || "",
+      };
+    })
+    .filter((column) =>
+      parsed.data.some((row) => coerceNumber(row[column.originalName]) != null)
+    );
 
   const rows = parsed.data
     .map((row) => {
@@ -282,14 +361,17 @@ function parseTrendCsv(text, fileName) {
         __elapsedHours: elapsedHours,
         __timeLabel: formatDuration(elapsedHours),
       };
-      for (const column of columns) output[column.key] = coerceNumber(row[column.originalName]);
+      for (const column of columns)
+        output[column.key] = coerceNumber(row[column.originalName]);
       return output;
     })
     .filter(Boolean)
     .sort((a, b) => a.__elapsedHours - b.__elapsedHours);
 
   if (!rows.length || !columns.length) {
-    throw new Error("No usable time-series data found. Expected one time column and at least one numeric channel.");
+    throw new Error(
+      "No usable time-series data found. Expected one time column and at least one numeric channel."
+    );
   }
 
   return {
@@ -305,18 +387,27 @@ function CustomTooltip({ active, payload, label, columnsByKey }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-xl backdrop-blur">
-      <div className="mb-2 text-sm font-semibold text-slate-900">Elapsed time: {niceNumber(label, 2)} h</div>
+      <div className="mb-2 text-sm font-semibold text-slate-900">
+        Elapsed time: {niceNumber(label, 2)} h
+      </div>
       <div className="space-y-1">
         {payload.map((item) => {
           const column = columnsByKey[item.dataKey];
           return (
-            <div key={item.dataKey} className="flex items-center justify-between gap-6 text-sm">
+            <div
+              key={item.dataKey}
+              className="flex items-center justify-between gap-6 text-sm"
+            >
               <span className="flex items-center gap-2 text-slate-600">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                <span
+                  className="h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: item.color }}
+                />
                 {column?.displayName || item.dataKey}
               </span>
               <span className="font-mono font-medium text-slate-900">
-                {niceNumber(item.value)}{column?.unit ? ` ${column.unit}` : ""}
+                {niceNumber(item.value)}
+                {column?.unit ? ` ${column.unit}` : ""}
               </span>
             </div>
           );
@@ -349,10 +440,9 @@ export default function BioreactorTrendViewer() {
     reader.onload = () => {
       try {
         const result = parseTrendCsv(String(reader.result || ""), file.name);
-        const preferred = result.columns.filter(isPreferredChannel).map((c) => c.key);
-        const fallback = result.columns.slice(0, Math.min(5, result.columns.length)).map((c) => c.key);
+        const allChannelKeys = result.columns.map((c) => c.key);
         setTrend(result);
-        setSelectedKeys(preferred.length ? preferred : fallback);
+        setSelectedKeys(allChannelKeys);
         setXEnd(result.maxHours);
         setSmoothWindow(1);
       } catch (err) {
@@ -371,15 +461,23 @@ export default function BioreactorTrendViewer() {
   const xAxisMax = maxHours;
   const xStartNumber = 0;
   const xEndNumber = Math.max(0, Math.min(Number(xEnd), maxHours));
-  const xTicks = useMemo(() => buildFiveHourTicks(xStartNumber, xEndNumber), [xStartNumber, xEndNumber]);
+  const xTicks = useMemo(
+    () => buildFiveHourTicks(xStartNumber, xEndNumber),
+    [xStartNumber, xEndNumber]
+  );
 
   const visibleRows = useMemo(() => {
     if (!trend) return [];
-    return trend.rows.filter((row) => row.__elapsedHours >= xStartNumber && row.__elapsedHours <= xEndNumber);
+    return trend.rows.filter(
+      (row) =>
+        row.__elapsedHours >= xStartNumber && row.__elapsedHours <= xEndNumber
+    );
   }, [trend, xStartNumber, xEndNumber]);
 
   const statsByKey = useMemo(() => {
-    return Object.fromEntries(selectedKeys.map((key) => [key, getStats(visibleRows, key)]));
+    return Object.fromEntries(
+      selectedKeys.map((key) => [key, getStats(visibleRows, key)])
+    );
   }, [selectedKeys, visibleRows]);
 
   const chartRows = useMemo(() => {
@@ -404,12 +502,15 @@ export default function BioreactorTrendViewer() {
     return downsampleRows(rows, Number(maxPoints));
   }, [trend, visibleRows, selectedKeys, smoothWindow, maxPoints]);
 
-  const selectedColumns = (trend?.columns || []).filter((column) => selectedKeys.includes(column.key));
+  const selectedColumns = (trend?.columns || []).filter((column) =>
+    selectedKeys.includes(column.key)
+  );
   const axisWidth = 56;
   const plotMinWidth = 1500;
   const axisRailWidth = Math.max(64, selectedColumns.length * axisWidth);
   const chartMinWidth = plotMinWidth + axisRailWidth + 24;
-  const chartContentWidth = selectedColumns.length >= 5 ? `${chartMinWidth}px` : "100%";
+  const chartContentWidth =
+    selectedColumns.length >= 5 ? `${chartMinWidth}px` : "100%";
   const chartMargin = {
     top: Math.max(80, axisLabelFontSize * 4.5, graphTitleFontSize + 54),
     right: 20,
@@ -440,7 +541,9 @@ export default function BioreactorTrendViewer() {
     return [bounds.min, bounds.max];
   }
 
-  const boundsByKey = Object.fromEntries(selectedColumns.map((column) => [column.key, getAxisBounds(column)]));
+  const boundsByKey = Object.fromEntries(
+    selectedColumns.map((column) => [column.key, getAxisBounds(column)])
+  );
 
   function clampEndHour(value) {
     const n = Number(value);
@@ -455,7 +558,9 @@ export default function BioreactorTrendViewer() {
 
   function toggleChannel(key) {
     setSelectedKeys((current) =>
-      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+      current.includes(key)
+        ? current.filter((item) => item !== key)
+        : [...current, key]
     );
   }
 
@@ -498,14 +603,24 @@ export default function BioreactorTrendViewer() {
       if (!current) return current;
       return {
         ...current,
-        columns: current.columns.map((column) => ({ ...column, yMin: "", yMax: "" })),
+        columns: current.columns.map((column) => {
+          const defaults = getDefaultChannelSettings(column.originalName);
+          return {
+            ...column,
+            displayName: defaults?.displayName || column.displayName,
+            yMin: defaults?.yMin || "",
+            yMax: defaults?.yMax || "",
+          };
+        }),
       };
     });
   }
 
   function exportGraphImage() {
     const chartNode = chartExportRef.current;
-    const svg = chartNode?.querySelector("svg.recharts-surface") || chartNode?.querySelector("svg");
+    const svg =
+      chartNode?.querySelector("svg.recharts-surface") ||
+      chartNode?.querySelector("svg");
     if (!svg || !trend) return;
 
     const svgRect = svg.getBoundingClientRect();
@@ -513,11 +628,21 @@ export default function BioreactorTrendViewer() {
     const heightAttr = Number(svg.getAttribute("height"));
     const width = Math.max(
       1,
-      Math.ceil(widthAttr || svgRect.width || chartNode.scrollWidth || chartNode.clientWidth)
+      Math.ceil(
+        widthAttr ||
+          svgRect.width ||
+          chartNode.scrollWidth ||
+          chartNode.clientWidth
+      )
     );
     const height = Math.max(
       1,
-      Math.ceil(heightAttr || svgRect.height || chartNode.scrollHeight || chartNode.clientHeight)
+      Math.ceil(
+        heightAttr ||
+          svgRect.height ||
+          chartNode.scrollHeight ||
+          chartNode.clientHeight
+      )
     );
 
     const clone = svg.cloneNode(true);
@@ -539,7 +664,10 @@ export default function BioreactorTrendViewer() {
       if (fontWeight) node.setAttribute("font-weight", fontWeight);
     });
 
-    const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    const background = document.createElementNS(
+      "http://www.w3.org/2000/svg",
+      "rect"
+    );
     background.setAttribute("x", "0");
     background.setAttribute("y", "0");
     background.setAttribute("width", String(width));
@@ -548,7 +676,9 @@ export default function BioreactorTrendViewer() {
     clone.insertBefore(background, clone.firstChild);
 
     const svgText = new XMLSerializer().serializeToString(clone);
-    const svgBlob = new Blob([svgText], { type: "image/svg+xml;charset=utf-8" });
+    const svgBlob = new Blob([svgText], {
+      type: "image/svg+xml;charset=utf-8",
+    });
     const url = URL.createObjectURL(svgBlob);
     const image = new Image();
 
@@ -590,13 +720,21 @@ export default function BioreactorTrendViewer() {
             <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-600">
               <FileText className="h-4 w-4" /> Bioreactor process trend viewer
             </div>
-            <h1 className="text-3xl font-semibold tracking-tight text-slate-950">CSV trend visualization</h1>
+            <h1 className="text-3xl font-semibold tracking-tight text-slate-950">
+              CSV trend visualization
+            </h1>
             <p className="mt-2 max-w-4xl text-slate-600">
-              Load controller exports with elapsed time in <span className="font-mono">hh:mm:ss</span> format and numeric trend columns. The graph is shown first at full page width, with controls below it.
+              Load controller exports with elapsed time in{" "}
+              <span className="font-mono">hh:mm:ss</span> format and numeric
+              trend columns. The graph is shown first at full page width, with
+              controls below it.
             </p>
           </div>
 
-          <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 font-medium text-white shadow-sm transition hover:bg-slate-800" title="Open a controller trend CSV file from your computer.">
+          <label
+            className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 font-medium text-white shadow-sm transition hover:bg-slate-800"
+            title="Open a controller trend CSV file from your computer."
+          >
             <UploadCloud className="h-5 w-5" />
             Choose CSV
             <input
@@ -621,16 +759,25 @@ export default function BioreactorTrendViewer() {
               loadFile(event.dataTransfer.files?.[0]);
             }}
             className={`rounded-3xl border-2 border-dashed p-12 text-center transition ${
-              isDragging ? "border-slate-900 bg-white" : "border-slate-300 bg-white/70"
+              isDragging
+                ? "border-slate-900 bg-white"
+                : "border-slate-300 bg-white/70"
             }`}
             title="Drag and drop a CSV trend export here."
           >
             <UploadCloud className="mx-auto mb-4 h-12 w-12 text-slate-400" />
-            <h2 className="text-xl font-semibold text-slate-950">Drop a bioreactor CSV here</h2>
+            <h2 className="text-xl font-semibold text-slate-950">
+              Drop a bioreactor CSV here
+            </h2>
             <p className="mx-auto mt-2 max-w-xl text-slate-600">
-              This parser is tuned for exports like: Time, pH, stirrer rpm, air flow, O₂ flow, base addition, temperature, and dissolved oxygen.
+              This parser is tuned for exports like: Time, pH, stirrer rpm, air
+              flow, O₂ flow, base addition, temperature, and dissolved oxygen.
             </p>
-            {error && <p className="mt-4 rounded-2xl bg-red-50 p-3 text-sm font-medium text-red-700">{error}</p>}
+            {error && (
+              <p className="mt-4 rounded-2xl bg-red-50 p-3 text-sm font-medium text-red-700">
+                {error}
+              </p>
+            )}
           </div>
         )}
 
@@ -641,12 +788,21 @@ export default function BioreactorTrendViewer() {
                 <h2 className="mb-4 text-lg font-semibold">File summary</h2>
                 <div className="space-y-3 text-sm text-slate-600">
                   <div>
-                    <div className="font-medium text-slate-950">{trend.fileName}</div>
-                    <div>{trend.rows.length.toLocaleString()} rows · {trend.columns.length} channels · {niceNumber(trend.maxHours, 1)} h total duration</div>
-                    <div className="mt-1">Displayed window: 0 to {niceNumber(xEndNumber, 2)} h</div>
+                    <div className="font-medium text-slate-950">
+                      {trend.fileName}
+                    </div>
+                    <div>
+                      {trend.rows.length.toLocaleString()} rows ·{" "}
+                      {trend.columns.length} channels ·{" "}
+                      {niceNumber(trend.maxHours, 1)} h total duration
+                    </div>
+                    <div className="mt-1">
+                      Displayed window: 0 to {niceNumber(xEndNumber, 2)} h
+                    </div>
                   </div>
                   <div className="rounded-2xl bg-slate-100 px-3 py-2 font-medium text-slate-600">
-                    Showing {visibleRows.length.toLocaleString()} rows / plotting {chartRows.length.toLocaleString()} points
+                    Showing {visibleRows.length.toLocaleString()} rows /
+                    plotting {chartRows.length.toLocaleString()} points
                   </div>
                   <button
                     onClick={exportGraphImage}
@@ -674,7 +830,9 @@ export default function BioreactorTrendViewer() {
 
                 <div className="grid gap-4">
                   <label>
-                    <FieldLabel hint="Average neighboring points to reduce visual noise. Larger windows smooth more but can hide sharp process events.">Smoothing window</FieldLabel>
+                    <FieldLabel hint="Average neighboring points to reduce visual noise. Larger windows smooth more but can hide sharp process events.">
+                      Smoothing window
+                    </FieldLabel>
                     <div className="flex items-center gap-3">
                       <input
                         title="Moving-average window size in plotted data points. This does not change the selected time range."
@@ -683,15 +841,21 @@ export default function BioreactorTrendViewer() {
                         max="61"
                         step="2"
                         value={smoothWindow}
-                        onChange={(event) => setSmoothWindow(Number(event.target.value))}
+                        onChange={(event) =>
+                          setSmoothWindow(Number(event.target.value))
+                        }
                         className="w-full"
                       />
-                      <span className="w-16 rounded-xl bg-slate-100 px-2 py-1 text-center font-mono text-sm">{smoothWindow} pts</span>
+                      <span className="w-16 rounded-xl bg-slate-100 px-2 py-1 text-center font-mono text-sm">
+                        {smoothWindow} pts
+                      </span>
                     </div>
                   </label>
 
                   <label>
-                    <FieldLabel hint="Caps the number of points sent to the chart for performance. This does not change the selected time range or total duration.">Max plotted points</FieldLabel>
+                    <FieldLabel hint="Caps the number of points sent to the chart for performance. This does not change the selected time range or total duration.">
+                      Max plotted points
+                    </FieldLabel>
                     <div className="flex items-center gap-3">
                       <input
                         title="Increase for finer visual detail; decrease if the graph feels slow. The displayed end hour is preserved."
@@ -700,15 +864,21 @@ export default function BioreactorTrendViewer() {
                         max="5000"
                         step="250"
                         value={maxPoints}
-                        onChange={(event) => setMaxPoints(Number(event.target.value))}
+                        onChange={(event) =>
+                          setMaxPoints(Number(event.target.value))
+                        }
                         className="w-full"
                       />
-                      <span className="w-20 rounded-xl bg-slate-100 px-2 py-1 text-center font-mono text-sm">{maxPoints}</span>
+                      <span className="w-20 rounded-xl bg-slate-100 px-2 py-1 text-center font-mono text-sm">
+                        {maxPoints}
+                      </span>
                     </div>
                   </label>
 
                   <label>
-                    <FieldLabel hint="Font size for the bold x-axis label and vertical y-axis labels.">Axis label font size</FieldLabel>
+                    <FieldLabel hint="Font size for the bold x-axis label and vertical y-axis labels.">
+                      Axis label font size
+                    </FieldLabel>
                     <div className="flex items-center gap-3">
                       <input
                         title="Adjust the font size of bold axis labels."
@@ -717,15 +887,21 @@ export default function BioreactorTrendViewer() {
                         max="22"
                         step="1"
                         value={axisLabelFontSize}
-                        onChange={(event) => setAxisLabelFontSize(Number(event.target.value))}
+                        onChange={(event) =>
+                          setAxisLabelFontSize(Number(event.target.value))
+                        }
                         className="w-full"
                       />
-                      <span className="w-14 rounded-xl bg-slate-100 px-2 py-1 text-center font-mono text-sm">{axisLabelFontSize}px</span>
+                      <span className="w-14 rounded-xl bg-slate-100 px-2 py-1 text-center font-mono text-sm">
+                        {axisLabelFontSize}px
+                      </span>
                     </div>
                   </label>
 
                   <label>
-                    <FieldLabel hint="Title shown centered above the graph and included in exported images.">Graph title</FieldLabel>
+                    <FieldLabel hint="Title shown centered above the graph and included in exported images.">
+                      Graph title
+                    </FieldLabel>
                     <input
                       title="Edit the graph title displayed at the top center of the chart."
                       value={graphTitle}
@@ -736,7 +912,9 @@ export default function BioreactorTrendViewer() {
                   </label>
 
                   <label>
-                    <FieldLabel hint="Font size for the centered graph title.">Graph title font size</FieldLabel>
+                    <FieldLabel hint="Font size for the centered graph title.">
+                      Graph title font size
+                    </FieldLabel>
                     <div className="flex items-center gap-3">
                       <input
                         title="Adjust the font size of the centered graph title."
@@ -745,15 +923,21 @@ export default function BioreactorTrendViewer() {
                         max="42"
                         step="1"
                         value={graphTitleFontSize}
-                        onChange={(event) => setGraphTitleFontSize(Number(event.target.value))}
+                        onChange={(event) =>
+                          setGraphTitleFontSize(Number(event.target.value))
+                        }
                         className="w-full"
                       />
-                      <span className="w-14 rounded-xl bg-slate-100 px-2 py-1 text-center font-mono text-sm">{graphTitleFontSize}px</span>
+                      <span className="w-14 rounded-xl bg-slate-100 px-2 py-1 text-center font-mono text-sm">
+                        {graphTitleFontSize}px
+                      </span>
                     </div>
                   </label>
 
                   <label>
-                    <FieldLabel hint="Font size for the numeric tick values on the X and Y axes.">Axis number font size</FieldLabel>
+                    <FieldLabel hint="Font size for the numeric tick values on the X and Y axes.">
+                      Axis number font size
+                    </FieldLabel>
                     <div className="flex items-center gap-3">
                       <input
                         title="Adjust the font size of X-axis and Y-axis numbers."
@@ -762,14 +946,21 @@ export default function BioreactorTrendViewer() {
                         max="22"
                         step="1"
                         value={axisNumberFontSize}
-                        onChange={(event) => setAxisNumberFontSize(Number(event.target.value))}
+                        onChange={(event) =>
+                          setAxisNumberFontSize(Number(event.target.value))
+                        }
                         className="w-full"
                       />
-                      <span className="w-14 rounded-xl bg-slate-100 px-2 py-1 text-center font-mono text-sm">{axisNumberFontSize}px</span>
+                      <span className="w-14 rounded-xl bg-slate-100 px-2 py-1 text-center font-mono text-sm">
+                        {axisNumberFontSize}px
+                      </span>
                     </div>
                   </label>
 
-                  <label className="flex items-center gap-3 text-sm font-medium text-slate-700" title="Show a marker at each plotted sample. Useful for sparse data, but can clutter dense process records.">
+                  <label
+                    className="flex items-center gap-3 text-sm font-medium text-slate-700"
+                    title="Show a marker at each plotted sample. Useful for sparse data, but can clutter dense process records."
+                  >
                     <input
                       type="checkbox"
                       checked={showDots}
@@ -787,11 +978,15 @@ export default function BioreactorTrendViewer() {
                 <div className="grid gap-4">
                   <div className="flex items-center justify-between gap-3 text-sm text-slate-600">
                     <span>Displayed range</span>
-                    <span className="font-mono font-medium text-slate-900">0 to {niceNumber(xEndNumber, 2)} h</span>
+                    <span className="font-mono font-medium text-slate-900">
+                      0 to {niceNumber(xEndNumber, 2)} h
+                    </span>
                   </div>
 
                   <label>
-                    <FieldLabel hint="Controls the displayed endpoint. The graph always starts at 0 hours. The slider advances in 5-hour increments and ends at the last time in the CSV.">Time range slider</FieldLabel>
+                    <FieldLabel hint="Controls the displayed endpoint. The graph always starts at 0 hours. The slider advances in 5-hour increments and ends at the last time in the CSV.">
+                      Time range slider
+                    </FieldLabel>
                     <input
                       type="range"
                       min="0"
@@ -808,10 +1003,18 @@ export default function BioreactorTrendViewer() {
               <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200 lg:col-span-2 2xl:col-span-4">
                 <div className="mb-4 flex items-end justify-between gap-2">
                   <div>
-                    <h2 className="text-lg font-semibold text-slate-950">Channels</h2>
-                    <p className="text-sm text-slate-600">Select channels, drag to reorder draw order, and edit names, units, colors, and y-axis limits. Lower channels draw on top.</p>
+                    <h2 className="text-lg font-semibold text-slate-950">
+                      Channels
+                    </h2>
+                    <p className="text-sm text-slate-600">
+                      Select channels, drag to reorder draw order, and edit
+                      names, units, colors, and y-axis limits. Lower channels
+                      draw on top.
+                    </p>
                   </div>
-                  <div className="text-sm font-medium text-slate-500">{selectedKeys.length} selected</div>
+                  <div className="text-sm font-medium text-slate-500">
+                    {selectedKeys.length} selected
+                  </div>
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -829,36 +1032,64 @@ export default function BioreactorTrendViewer() {
                         }}
                         onDragEnd={() => setDraggedChannelKey(null)}
                         title="Drag this channel card to reorder the graph draw order. Channels lower in the list are drawn later and appear on top."
-                        className={`cursor-grab rounded-2xl border p-3 active:cursor-grabbing ${selected ? "border-slate-300 bg-slate-50" : "border-slate-200 bg-white"} ${draggedChannelKey === column.key ? "opacity-60 ring-2 ring-slate-300" : ""}`}
+                        className={`cursor-grab rounded-2xl border p-3 active:cursor-grabbing ${
+                          selected
+                            ? "border-slate-300 bg-slate-50"
+                            : "border-slate-200 bg-white"
+                        } ${
+                          draggedChannelKey === column.key
+                            ? "opacity-60 ring-2 ring-slate-300"
+                            : ""
+                        }`}
                       >
-                        <label className="mb-3 flex cursor-pointer items-center gap-3" title="Toggle whether this channel is displayed on the graph and included in the visible statistics.">
+                        <label
+                          className="mb-3 flex cursor-pointer items-center gap-3"
+                          title="Toggle whether this channel is displayed on the graph and included in the visible statistics."
+                        >
                           <input
                             type="checkbox"
                             checked={selected}
                             onChange={() => toggleChannel(column.key)}
                             className="h-4 w-4 rounded border-slate-300"
                           />
-                          <span className="h-3 w-3 rounded-full" style={{ backgroundColor: column.color }} />
-                          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">{column.displayName}</span>
+                          <span
+                            className="h-3 w-3 rounded-full"
+                            style={{ backgroundColor: column.color }}
+                          />
+                          <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900">
+                            {column.displayName}
+                          </span>
                         </label>
 
                         <div className="grid gap-2">
                           <div className="grid grid-cols-[1fr_0.42fr] gap-2">
                             <label>
-                              <FieldLabel hint="Display name used in the legend, tooltip, statistics cards, and graph export.">Name</FieldLabel>
+                              <FieldLabel hint="Display name used in the legend, tooltip, statistics cards, and graph export.">
+                                Name
+                              </FieldLabel>
                               <input
                                 title={`Original header: ${column.originalName}`}
                                 value={column.displayName}
-                                onChange={(event) => updateColumn(column.key, { displayName: event.target.value })}
+                                onChange={(event) =>
+                                  updateColumn(column.key, {
+                                    displayName: event.target.value,
+                                  })
+                                }
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                               />
                             </label>
                             <label>
-                              <FieldLabel hint="Engineering unit shown on this channel's y-axis and in tooltips.">Unit</FieldLabel>
+                              <FieldLabel hint="Engineering unit shown on this channel's y-axis and in tooltips.">
+                                Unit
+                              </FieldLabel>
                               <input
                                 title="Examples: pH, rpm, L/min, %, °C, mL. Leave blank for unitless signals."
                                 value={column.unit}
-                                onChange={(event) => updateColumn(column.key, { unit: event.target.value })}
+                                onChange={(event) =>
+                                  updateColumn(column.key, {
+                                    unit: event.target.value,
+                                  })
+                                }
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
                               />
                             </label>
@@ -866,33 +1097,51 @@ export default function BioreactorTrendViewer() {
 
                           <div className="grid grid-cols-[0.36fr_1fr_1fr] gap-2">
                             <label>
-                              <FieldLabel hint="Trace and y-axis color for this channel.">Color</FieldLabel>
+                              <FieldLabel hint="Trace and y-axis color for this channel.">
+                                Color
+                              </FieldLabel>
                               <input
                                 title="Choose the color used for this channel's line, axis ticks, and labels."
                                 type="color"
                                 value={column.color}
-                                onChange={(event) => updateColumn(column.key, { color: event.target.value })}
+                                onChange={(event) =>
+                                  updateColumn(column.key, {
+                                    color: event.target.value,
+                                  })
+                                }
                                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-2"
                               />
                             </label>
                             <label>
-                              <FieldLabel hint="Optional lower limit for this channel's y-axis. Leave blank for automatic scaling.">Y min</FieldLabel>
+                              <FieldLabel hint="Optional lower limit for this channel's y-axis. Leave blank for automatic scaling.">
+                                Y min
+                              </FieldLabel>
                               <input
                                 title="Only applies to this channel. Leave blank for automatic scaling."
                                 type="number"
                                 value={column.yMin}
-                                onChange={(event) => updateColumn(column.key, { yMin: event.target.value })}
+                                onChange={(event) =>
+                                  updateColumn(column.key, {
+                                    yMin: event.target.value,
+                                  })
+                                }
                                 placeholder="auto"
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-sm"
                               />
                             </label>
                             <label>
-                              <FieldLabel hint="Optional upper limit for this channel's y-axis. Leave blank for automatic scaling.">Y max</FieldLabel>
+                              <FieldLabel hint="Optional upper limit for this channel's y-axis. Leave blank for automatic scaling.">
+                                Y max
+                              </FieldLabel>
                               <input
                                 title="Only applies to this channel. Leave blank for automatic scaling."
                                 type="number"
                                 value={column.yMax}
-                                onChange={(event) => updateColumn(column.key, { yMax: event.target.value })}
+                                onChange={(event) =>
+                                  updateColumn(column.key, {
+                                    yMax: event.target.value,
+                                  })
+                                }
                                 placeholder="auto"
                                 className="w-full rounded-xl border border-slate-200 px-3 py-2 font-mono text-sm"
                               />
@@ -910,9 +1159,13 @@ export default function BioreactorTrendViewer() {
               <section className="rounded-3xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4">
                 <div className="mb-1 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <h2 className="text-lg font-semibold text-slate-950">Trend graph</h2>
+                    <h2 className="text-lg font-semibold text-slate-950">
+                      Trend graph
+                    </h2>
                     <p className="text-sm text-slate-600">
-                      Each selected trace is bound to its own left-side y-axis. The plot keeps a minimum width so added axes do not compress the trend area.
+                      Each selected trace is bound to its own left-side y-axis.
+                      The plot keeps a minimum width so added axes do not
+                      compress the trend area.
                     </p>
                   </div>
                 </div>
@@ -922,86 +1175,106 @@ export default function BioreactorTrendViewer() {
                     Select at least one channel.
                   </div>
                 ) : (
-                  <div ref={chartExportRef} className="h-[min(78vh,900px)] min-h-[720px] w-full overflow-x-auto rounded-2xl bg-white pt-1">
-                    <div className="h-full" style={{ width: chartContentWidth, minWidth: "100%" }}>
+                  <div
+                    ref={chartExportRef}
+                    className="h-[min(78vh,900px)] min-h-[720px] w-full overflow-x-auto rounded-2xl bg-white pt-1"
+                  >
+                    <div
+                      className="h-full"
+                      style={{ width: chartContentWidth, minWidth: "100%" }}
+                    >
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={chartRows} margin={chartMargin}>
-                        {graphTitle.trim() && (
-                          <text
-                            x="50%"
-                            y={Math.max(28, graphTitleFontSize + 4)}
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                            fontSize={graphTitleFontSize}
-                            fontWeight={700}
-                            fill="#0f172a"
-                          >
-                            {graphTitle}
-                          </text>
-                        )}
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis
-                          dataKey="__elapsedHours"
-                          type="number"
-                          domain={[xStartNumber, xEndNumber]}
-                          ticks={xTicks}
-                          interval={0}
-                          tick={{ fontSize: axisNumberFontSize, fill: "#475569" }}
-                          tickFormatter={(value) => value % 10 === 0 ? niceNumber(value, 0) : ""}
-                          label={{
-                            value: "Elapsed time (h)",
-                            position: "insideBottom",
-                            offset: -18,
-                            fontSize: axisLabelFontSize,
-                            fontWeight: 700,
-                            fill: "#0f172a",
-                          }}
-                        />
-                        {selectedColumns.map((column, index) => (
-                          <YAxis
-                            key={column.key}
-                            yAxisId={column.key}
-                            orientation="left"
-                            domain={getAxisDomain(column)}
-                            tickFormatter={(value) => niceNumber(value, 2)}
-                            tick={{ fill: column.color, fontSize: axisNumberFontSize }}
-                            axisLine={{ stroke: column.color }}
-                            tickLine={{ stroke: column.color }}
-                            width={axisWidth}
-                            allowDataOverflow={hasManualAxisDomain(column)}
+                          {graphTitle.trim() && (
+                            <text
+                              x="50%"
+                              y={Math.max(28, graphTitleFontSize + 4)}
+                              textAnchor="middle"
+                              dominantBaseline="middle"
+                              fontSize={graphTitleFontSize}
+                              fontWeight={700}
+                              fill="#0f172a"
+                            >
+                              {graphTitle}
+                            </text>
+                          )}
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis
+                            dataKey="__elapsedHours"
+                            type="number"
+                            domain={[xStartNumber, xEndNumber]}
+                            ticks={xTicks}
+                            interval={0}
+                            tick={{
+                              fontSize: axisNumberFontSize,
+                              fill: "#475569",
+                            }}
+                            tickFormatter={(value) =>
+                              value % 10 === 0 ? niceNumber(value, 0) : ""
+                            }
                             label={{
-                              value: `${column.displayName}${column.unit ? ` (${column.unit})` : ""}`,
-                              angle: -90,
-                              position: "top",
+                              value: "Elapsed time (h)",
+                              position: "insideBottom",
+                              offset: -18,
                               fontSize: axisLabelFontSize,
                               fontWeight: 700,
-                              fill: column.color,
-                              offset: 12,
-                              dx: -14,
-                              dy: 18,
+                              fill: "#0f172a",
                             }}
                           />
-                        ))}
-                        <Tooltip
-                          content={<CustomTooltip columnsByKey={columnsByKey} />}
-                          labelFormatter={(value) => niceNumber(value, 2)}
-                        />
-                        {selectedColumns.map((column) => (
-                          <Line
-                            key={column.key}
-                            yAxisId={column.key}
-                            type="monotone"
-                            dataKey={column.key}
-                            name={`${column.displayName}${column.unit ? ` (${column.unit})` : ""}`}
-                            stroke={column.color}
-                            strokeWidth={2}
-                            dot={showDots ? { r: 2 } : false}
-                            activeDot={{ r: 5 }}
-                            connectNulls
-                            isAnimationActive={false}
+                          {selectedColumns.map((column, index) => (
+                            <YAxis
+                              key={column.key}
+                              yAxisId={column.key}
+                              orientation="left"
+                              domain={getAxisDomain(column)}
+                              tickFormatter={(value) => niceNumber(value, 2)}
+                              tick={{
+                                fill: column.color,
+                                fontSize: axisNumberFontSize,
+                              }}
+                              axisLine={{ stroke: column.color }}
+                              tickLine={{ stroke: column.color }}
+                              width={axisWidth}
+                              allowDataOverflow={hasManualAxisDomain(column)}
+                              label={{
+                                value: `${column.displayName}${
+                                  column.unit ? ` (${column.unit})` : ""
+                                }`,
+                                angle: -90,
+                                position: "top",
+                                fontSize: axisLabelFontSize,
+                                fontWeight: 700,
+                                fill: column.color,
+                                offset: 12,
+                                dx: -14,
+                                dy: 18,
+                              }}
+                            />
+                          ))}
+                          <Tooltip
+                            content={
+                              <CustomTooltip columnsByKey={columnsByKey} />
+                            }
+                            labelFormatter={(value) => niceNumber(value, 2)}
                           />
-                        ))}
-                      </LineChart>
+                          {selectedColumns.map((column) => (
+                            <Line
+                              key={column.key}
+                              yAxisId={column.key}
+                              type="monotone"
+                              dataKey={column.key}
+                              name={`${column.displayName}${
+                                column.unit ? ` (${column.unit})` : ""
+                              }`}
+                              stroke={column.color}
+                              strokeWidth={2}
+                              dot={showDots ? { r: 2 } : false}
+                              activeDot={{ r: 5 }}
+                              connectNulls
+                              isAnimationActive={false}
+                            />
+                          ))}
+                        </LineChart>
                       </ResponsiveContainer>
                     </div>
                   </div>
