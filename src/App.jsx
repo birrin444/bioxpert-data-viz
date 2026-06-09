@@ -171,7 +171,7 @@ function cleanChannelName(label) {
 }
 
 const CHANNEL_DEFAULTS = [
-  { ids: ["m_ph", "mph", "ph"], displayName: "pH", yMin: "0", yMax: "14" },
+  { ids: ["m_ph", "mph", "ph"], displayName: "pH", yMin: "1", yMax: "14" },
   {
     ids: ["m_stirrer", "mstirrer", "stirrer"],
     displayName: "Agitation",
