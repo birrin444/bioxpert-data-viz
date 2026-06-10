@@ -425,7 +425,7 @@ export default function BioreactorTrendViewer() {
   const [xEnd, setXEnd] = useState(0);
   const [axisLabelFontSize, setAxisLabelFontSize] = useState(12);
   const [axisNumberFontSize, setAxisNumberFontSize] = useState(11);
-  const [graphTitle, setGraphTitle] = useState("Bioreactor Process Trends");
+  const [graphTitle, setGraphTitle] = useState("");
   const [graphTitleFontSize, setGraphTitleFontSize] = useState(24);
   const [showDots, setShowDots] = useState(false);
   const [draggedChannelKey, setDraggedChannelKey] = useState(null);
@@ -443,6 +443,7 @@ export default function BioreactorTrendViewer() {
         const allChannelKeys = result.columns.map((c) => c.key);
         setTrend(result);
         setSelectedKeys(allChannelKeys);
+        setGraphTitle(baseFileName(result.fileName));
         setXEnd(result.maxHours);
         setSmoothWindow(1);
       } catch (err) {
@@ -597,6 +598,7 @@ export default function BioreactorTrendViewer() {
     setMaxPoints(1500);
     setAxisLabelFontSize(12);
     setAxisNumberFontSize(11);
+    setGraphTitle(baseFileName(trend.fileName));
     setGraphTitleFontSize(24);
     setShowDots(false);
     setTrend((current) => {
